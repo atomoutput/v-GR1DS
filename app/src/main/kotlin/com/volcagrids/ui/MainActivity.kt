@@ -23,6 +23,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.volcagrids.engine.LogicMode
 import com.volcagrids.engine.OutputMode
+import com.volcagrids.engine.EnvelopeShape
 import com.volcagrids.midi.MidiSequencerService
 import com.volcagrids.ui.components.*
 import com.volcagrids.ui.theme.*
@@ -41,8 +42,8 @@ class MainActivity : ComponentActivity() {
             // Sync initial state from prefs to service
             syncServiceWithPrefs(sequencerService)
         }
-        override fun onServiceDisconnected(arg0: ComponentName) { 
-            viewModel.service = null 
+        override fun onServiceDisconnected(arg0: ComponentName) {
+            viewModel.service = null
         }
     }
 
@@ -74,6 +75,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        
+        // CRITICAL FIX: Start foreground service AND bind - correct pattern for Android 12+
+        // startForegroundService() triggers onCreate() which immediately calls startForeground()
+        // bindService() gives us the IBinder to interact with the service
         val intent = Intent(this, MidiSequencerService::class.java)
         startForegroundService(intent)
         bindService(intent, connection, Context.BIND_AUTO_CREATE)
@@ -81,10 +86,14 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme(colorScheme = RasterColorScheme, typography = RasterTypography) {
                 // Decay update loop for LED feedback - runs at 60fps
+                // OPTIMIZATION: Use snapshotFlow to only update when needed
                 androidx.compose.runtime.LaunchedEffect(Unit) {
                     while (true) {
                         kotlinx.coroutines.delay(16)  // ~60fps
-                        com.volcagrids.ui.FeedbackManager.updateDecay()
+                        // Only update if playing - saves CPU during startup
+                        if (viewModel.isPlaying) {
+                            com.volcagrids.ui.FeedbackManager.updateDecay()
+                        }
                     }
                 }
 
@@ -232,123 +241,142 @@ fun RasterInterface(viewModel: MainViewModel) {
         // Branding Header
         Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text("v_GR1D", style = RasterTypography.headlineLarge, color = RasterActive)
-            Text("// GRID_MATRIX_v2.0", style = RasterTypography.labelSmall, color = RasterGrid)
+            Text(
+                text = when (viewModel.sequencerMode) {
+                    SequencerMode.DRUMS -> "// GRID_SEQUENCER"
+                    SequencerMode.EUCLIDEAN -> "// EUCLIDEAN_ENGINE"
+                    SequencerMode.POLYRHYTHM -> "// POLYRHYTHM_MATRIX"
+                },
+                style = RasterTypography.labelSmall,
+                color = when (viewModel.sequencerMode) {
+                    SequencerMode.POLYRHYTHM -> Color(0xFFFFD600)
+                    else -> RasterGrid
+                }
+            )
         }
 
-        // Show Polyrhythm UI in POLY mode - TRUE POLYRHYTHM with ratios
-        if (viewModel.sequencerMode == SequencerMode.POLYRHYTHM) {
-            val service = viewModel.service
-            if (service != null) {
-                PolyrhythmModeUI(
-                    modifier = Modifier.fillMaxSize(),
-                    engine = service.polyrhythmEngine,
-                    isPlaying = viewModel.isPlaying,
-                    onPlayToggle = viewModel::togglePlay,
-                    onStepsChange = { channel, steps ->
-                        viewModel.setPolyrhythmSteps(channel, steps)
-                    },
-                    onHitsChange = { channel, hits ->
-                        viewModel.setPolyrhythmHits(channel, hits)
-                    },
-                    onDivisionChange = { channel, division ->
-                        // Map float division to nearest TimeDivision
-                        val divisions = com.volcagrids.engine.PolyrhythmEngine.Companion.TimeDivision.entries
-                        val nearest = divisions.minByOrNull { div: com.volcagrids.engine.PolyrhythmEngine.Companion.TimeDivision ->
-                            kotlin.math.abs(div.value - division)
-                        }
-                        if (nearest != null) {
-                            service.polyrhythmEngine.setTimeDivision(channel, nearest)
-                        }
-                    },
-                    onMuteToggle = viewModel::togglePolyrhythmMute,
-                    onSoloToggle = viewModel::togglePolyrhythmSolo,
-                    onGenerateReich = viewModel::generateReich,
-                    onGeneratePrimes = viewModel::generatePrimes,
-                    onGenerateFibonacci = viewModel::generateFibonacci,
-                    onGenerateKotekan = viewModel::generateKotekan,
-                    onDrumsToggle = {
-                        viewModel.sequencerMode = SequencerMode.DRUMS
-                    }
-                )
-            }
-        } else {
-            // Regular Drum/Euclidean Mode UI
-            BoxWithConstraints(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                val isCompact = maxWidth < 600.dp
-                if (isCompact) {
-                    // Phone UI - Swipable Pager
-                    val pagerState = androidx.compose.foundation.pager.rememberPagerState(
-                        initialPage = 1,
-                        pageCount = { 3 }
-                    )
-                    
-                    Column(modifier = Modifier.fillMaxSize()) {
-                        androidx.compose.foundation.pager.HorizontalPager(
-                            state = pagerState,
-                            modifier = Modifier.weight(1f).fillMaxWidth()
-                        ) { page ->
-                            when (page) {
-                                0 -> DataDeck(
-                                    title = "// [CHN_1-3]",
-                                    color = RasterSignalA,
-                                    viewModel = viewModel,
-                                    engineIndex = 0,
-                                    channelOffset = 0,
-                                    modifier = Modifier.fillMaxSize().padding(horizontal = 4.dp)
-                                )
-                                1 -> MasterCore(viewModel = viewModel, modifier = Modifier.fillMaxSize().padding(horizontal = 4.dp))
-                                2 -> DataDeck(
-                                    title = "// [CHN_4-6]",
-                                    color = RasterSignalB,
-                                    viewModel = viewModel,
-                                    engineIndex = 1,
-                                    channelOffset = 3,
-                                    modifier = Modifier.fillMaxSize().padding(horizontal = 4.dp)
-                                )
-                            }
-                        }
-                        
-                        // Page Indicator
-                        Row(
-                            Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp),
-                            horizontalArrangement = Arrangement.Center
-                        ) {
-                            repeat(3) { iteration ->
-                                val color = if (pagerState.currentPage == iteration) Color.White else Color.DarkGray
-                                Box(
-                                    modifier = Modifier
-                                        .padding(4.dp)
-                                        .size(8.dp)
-                                        .background(color, androidx.compose.foundation.shape.CircleShape)
-                                )
-                            }
-                        }
-                    }
-                } else {
-                    // Tablet UI - Side by side Row
-                    Row(
+        // MODE-SPECIFIC UI
+        // CRITICAL: Only ONE mode UI is visible at a time
+        when (viewModel.sequencerMode) {
+            SequencerMode.POLYRHYTHM -> {
+                // POLYRHYTHM MODE: Full-screen polyrhythm UI
+                // Grids/Topography UI is completely hidden
+                val service = viewModel.service
+                if (service != null) {
+                    PolyrhythmModeUI(
                         modifier = Modifier.fillMaxSize(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        DataDeck(
-                            title = "// [CHN_1-3]",
-                            color = RasterSignalA,
-                            viewModel = viewModel,
-                            engineIndex = 0,
-                            channelOffset = 0,
-                            modifier = Modifier.weight(1f)
+                        engine = service.polyrhythmEngine,
+                        isPlaying = viewModel.isPlaying,
+                        onPlayToggle = viewModel::togglePlay,
+                        onStepsChange = { channel, steps ->
+                            viewModel.setPolyrhythmSteps(channel, steps)
+                        },
+                        onHitsChange = { channel, hits ->
+                            viewModel.setPolyrhythmHits(channel, hits)
+                        },
+                        onDivisionChange = { channel, division ->
+                            // Map float division to nearest TimeDivision
+                            val divisions = com.volcagrids.engine.PolyrhythmEngine.Companion.TimeDivision.entries
+                            val nearest = divisions.minByOrNull { div: com.volcagrids.engine.PolyrhythmEngine.Companion.TimeDivision ->
+                                kotlin.math.abs(div.value - division)
+                            }
+                            if (nearest != null) {
+                                service.polyrhythmEngine.setTimeDivision(channel, nearest)
+                            }
+                        },
+                        onMuteToggle = viewModel::togglePolyrhythmMute,
+                        onSoloToggle = viewModel::togglePolyrhythmSolo,
+                        onGenerateReich = viewModel::generateReich,
+                        onGeneratePrimes = viewModel::generatePrimes,
+                        onGenerateFibonacci = viewModel::generateFibonacci,
+                        onGenerateKotekan = viewModel::generateKotekan,
+                        onDrumsToggle = {
+                            // Switch back to DRUMS mode
+                            viewModel.sequencerMode = SequencerMode.DRUMS
+                        }
+                    )
+                }
+            }
+            SequencerMode.DRUMS, SequencerMode.EUCLIDEAN -> {
+                // GRID SEQUENCER MODE: Full Grids/Topography UI
+                // Polyrhythm UI is completely hidden
+                BoxWithConstraints(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                    val isCompact = maxWidth < 600.dp
+                    if (isCompact) {
+                        // Phone UI - Swipable Pager
+                        val pagerState = androidx.compose.foundation.pager.rememberPagerState(
+                            initialPage = 1,
+                            pageCount = { 3 }
                         )
 
-                        MasterCore(viewModel = viewModel, modifier = Modifier.weight(0.5f))
+                        Column(modifier = Modifier.fillMaxSize()) {
+                            androidx.compose.foundation.pager.HorizontalPager(
+                                state = pagerState,
+                                modifier = Modifier.weight(1f).fillMaxWidth()
+                            ) { page ->
+                                when (page) {
+                                    0 -> DataDeck(
+                                        title = "// [CHN_1-3]",
+                                        color = RasterSignalA,
+                                        viewModel = viewModel,
+                                        engineIndex = 0,
+                                        channelOffset = 0,
+                                        modifier = Modifier.fillMaxSize().padding(horizontal = 4.dp)
+                                    )
+                                    1 -> MasterCore(viewModel = viewModel, modifier = Modifier.fillMaxSize().padding(horizontal = 4.dp))
+                                    2 -> DataDeck(
+                                        title = "// [CHN_4-6]",
+                                        color = RasterSignalB,
+                                        viewModel = viewModel,
+                                        engineIndex = 1,
+                                        channelOffset = 3,
+                                        modifier = Modifier.fillMaxSize().padding(horizontal = 4.dp)
+                                    )
+                                }
+                            }
 
-                        DataDeck(
-                            title = "// [CHN_4-6]",
-                            color = RasterSignalB,
-                            viewModel = viewModel,
-                            engineIndex = 1,
-                            channelOffset = 3,
-                            modifier = Modifier.weight(1f)
-                        )
+                            // Page Indicator
+                            Row(
+                                Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp),
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                repeat(3) { iteration ->
+                                    val color = if (pagerState.currentPage == iteration) Color.White else Color.DarkGray
+                                    Box(
+                                        modifier = Modifier
+                                            .padding(4.dp)
+                                            .size(8.dp)
+                                            .background(color, androidx.compose.foundation.shape.CircleShape)
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        // Tablet UI - Side by side Row
+                        Row(
+                            modifier = Modifier.fillMaxSize(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            DataDeck(
+                                title = "// [CHN_1-3]",
+                                color = RasterSignalA,
+                                viewModel = viewModel,
+                                engineIndex = 0,
+                                channelOffset = 0,
+                                modifier = Modifier.weight(1f)
+                            )
+
+                            MasterCore(viewModel = viewModel, modifier = Modifier.weight(0.5f))
+
+                            DataDeck(
+                                title = "// [CHN_4-6]",
+                                color = RasterSignalB,
+                                viewModel = viewModel,
+                                engineIndex = 1,
+                                channelOffset = 3,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
                     }
                 }
             }
@@ -368,8 +396,13 @@ fun DataDeck(
     Column(modifier = modifier.fillMaxHeight().border(1.dp, RasterGrid).padding(4.dp)) {
         Text(title, style = RasterTypography.labelSmall, color = color, modifier = Modifier.padding(bottom = 4.dp))
 
-        // PAD
-        Box(modifier = Modifier.weight(1f).fillMaxWidth().border(1.dp, RasterGrid)) {
+        // PAD - 50% of available space
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .border(1.dp, RasterGrid)
+        ) {
             GenerativePad(
                 modifier = Modifier.fillMaxSize(),
                 color = color,
@@ -386,8 +419,12 @@ fun DataDeck(
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // MIXER
-        Row(modifier = Modifier.height(180.dp).fillMaxWidth()) {
+        // MIXER - 50% of available space (equal weight to PAD)
+        Row(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+        ) {
             val densities = if (engineIndex == 0) viewModel.densitiesA else viewModel.densitiesB
             val partModes = if (engineIndex == 0) viewModel.partModesA else viewModel.partModesB
             val logicModes = if (engineIndex == 0) viewModel.logicModesA else viewModel.logicModesB
@@ -406,6 +443,13 @@ fun DataDeck(
                         modifier = Modifier.fillMaxWidth(0.8f).height(20.dp)
                     )
 
+                    // Interaction modes:
+                    // - Drag up/down: Adjust density value
+                    // - Long press: Toggle modulation preview overlay
+                    // - Double-tap: Open full Parameter Sequencer menu
+                    val partIndex = channelOffset + i
+                    val isPreviewActive = viewModel.showModulationPreview == partIndex
+
                     DataBar(
                         value = densities[i] / 255f,
                         label = "",
@@ -413,8 +457,15 @@ fun DataDeck(
                         onValueChange = { viewModel.updateDensity(engineIndex, i, (it * 255).toInt()) },
                         color = color,
                         modifier = Modifier.weight(1f).padding(vertical = 4.dp),
+                        showPreview = isPreviewActive,
+                        previewValue = viewModel.modulationPreviewValues.getOrNull(partIndex) ?: 0.5f,
+                        previewShape = viewModel.paramAssignments.getOrNull(partIndex)?.shape ?: EnvelopeShape.SMOOTH,
                         onLongPress = {
-                            val partIndex = channelOffset + i
+                            // Long press toggles modulation preview
+                            viewModel.showModulationPreview = if (isPreviewActive) -1 else partIndex
+                        },
+                        onDoubleClick = {
+                            // Double-tap opens full parameter editor
                             viewModel.openParameterSequencer(partIndex)
                         }
                     )
@@ -439,11 +490,13 @@ fun MasterCore(viewModel: MainViewModel, modifier: Modifier) {
         verticalArrangement = Arrangement.SpaceBetween
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            // SEQUENCER ENGINE MODE
+            // SEQUENCER ENGINE MODE SELECTOR
+            // CRITICAL: These are MUTUALLY EXCLUSIVE modes
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(2.dp)
             ) {
+                // DRUMS MODE - Grids topographic sequencer
                 Text(
                     text = "DRUMS",
                     style = RasterTypography.labelSmall,
@@ -456,12 +509,10 @@ fun MasterCore(viewModel: MainViewModel, modifier: Modifier) {
                         )
                         .clickable {
                             viewModel.sequencerMode = SequencerMode.DRUMS
-                            viewModel.polyrhythmPlaying = false
-                            viewModel.service?.polyrhythmPlaying = false
-                            viewModel.service?.polyrhythmEngine?.reset()
                         }
                         .padding(vertical = 4.dp, horizontal = 2.dp)
                 )
+                // EUCLIDEAN MODE - Grids with euclidean algorithms
                 Text(
                     text = "EUCL",
                     style = RasterTypography.labelSmall,
@@ -474,12 +525,10 @@ fun MasterCore(viewModel: MainViewModel, modifier: Modifier) {
                         )
                         .clickable {
                             viewModel.sequencerMode = SequencerMode.EUCLIDEAN
-                            viewModel.polyrhythmPlaying = false
-                            viewModel.service?.polyrhythmPlaying = false
-                            viewModel.service?.polyrhythmEngine?.reset()
                         }
                         .padding(vertical = 4.dp, horizontal = 2.dp)
                 )
+                // POLYRHYTHM MODE - Independent polyrhythm engine (NOT Grids)
                 Text(
                     text = "POLY",
                     style = RasterTypography.labelSmall,
@@ -492,13 +541,22 @@ fun MasterCore(viewModel: MainViewModel, modifier: Modifier) {
                         )
                         .clickable {
                             viewModel.sequencerMode = SequencerMode.POLYRHYTHM
-                            viewModel.polyrhythmPlaying = viewModel.isPlaying
-                            viewModel.service?.polyrhythmPlaying = viewModel.isPlaying
-                            viewModel.service?.polyrhythmEngine?.reset()
                         }
                         .padding(vertical = 4.dp, horizontal = 2.dp)
                 )
             }
+            
+            // Mode description
+            Text(
+                text = when (viewModel.sequencerMode) {
+                    SequencerMode.DRUMS -> "// TOPOGRAPHIC_GRID_SEQUENCER"
+                    SequencerMode.EUCLIDEAN -> "// EUCLIDEAN_ALGORITHMIC"
+                    SequencerMode.POLYRHYTHM -> "// MULTI_ENGINE_POLYRHYTHM"
+                },
+                style = RasterTypography.labelSmall,
+                color = Color.Gray,
+                modifier = Modifier.fillMaxWidth()
+            )
             
             Spacer(modifier = Modifier.height(6.dp))
             

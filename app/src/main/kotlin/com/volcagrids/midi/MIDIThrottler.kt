@@ -22,21 +22,35 @@ class MIDIThrottler(
     
     /**
      * Queue a CC message for throttled delivery.
-     * Returns true if message was accepted, false if queue is full.
+     * Returns true if message was accepted, false if queue is full or parameters invalid.
      */
     fun queueCC(channel: Int, cc: Int, value: Int): Boolean {
-        val now = clock.currentTimeMillis()
+        // CRITICAL FIX: Validate MIDI parameters to prevent transmission errors
+        if (channel !in 0..15) {
+            android.util.Log.w("MIDIThrottler", "Invalid MIDI channel: $channel (must be 0-15)")
+            return false
+        }
+        if (cc !in 0..127) {
+            android.util.Log.w("MIDIThrottler", "Invalid CC number: $cc (must be 0-127)")
+            return false
+        }
+        if (value !in 0..127) {
+            android.util.Log.w("MIDIThrottler", "Invalid CC value: $value (must be 0-127)")
+            return false
+        }
         
+        val now = clock.currentTimeMillis()
+
         // Clean old messages from queue (older than 1 second)
         while (messageQueue.isNotEmpty() && now - messageQueue.first().timestamp > 1000) {
             messageQueue.removeFirst()
         }
-        
+
         // Check if we're at capacity
         if (messageQueue.size >= maxCCsPerSecond) {
             return false // Drop message to prevent overflow
         }
-        
+
         messageQueue.addLast(CCMessage(channel, cc, value, now))
         return true
     }

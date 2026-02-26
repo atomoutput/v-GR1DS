@@ -49,21 +49,42 @@ class PatternGenerator {
     }
 
     private fun readDrumMap(step: Int, instrument: Int, x: Int, y: Int): Int {
-        val i = x shr 6
-        val j = y shr 6
+        // CRITICAL FIX: Clamp indices to prevent ArrayIndexOutOfBoundsException
+        // x and y are 0-255, divided into 4x4 grid (64 units each)
+        // drumMap is 5x5, so indices must be 0-3 to allow i+1 and j+1 access
+        val i = (x shr 6).coerceIn(0, 3)
+        val j = (y shr 6).coerceIn(0, 3)
         val xi = (x shl 2) and 0xff
         val yi = (y shl 2) and 0xff
 
+        // Safe access with bounds checking
+        val drumMapSafe = drumMap
+        if (i + 1 >= drumMapSafe.size || j + 1 >= drumMapSafe[i].size) {
+            // Fallback to corner value if bounds exceeded
+            return readDrumMapValue(step, instrument, 3, 3, xi, yi)
+        }
+
+        return readDrumMapValue(step, instrument, i, j, xi, yi)
+    }
+
+    private fun readDrumMapValue(
+        step: Int,
+        instrument: Int,
+        i: Int,
+        j: Int,
+        xi: Int,
+        yi: Int
+    ): Int {
         val aMap = Resources.nodeTable[drumMap[i][j]]
         val bMap = Resources.nodeTable[drumMap[i + 1][j]]
         val cMap = Resources.nodeTable[drumMap[i][j + 1]]
         val dMap = Resources.nodeTable[drumMap[i + 1][j + 1]]
 
         val offset = (instrument * STEPS_PER_PATTERN) + step
-        val a = aMap[offset]
-        val b = bMap[offset]
-        val c = cMap[offset]
-        val d = dMap[offset]
+        val a = aMap[offset.coerceIn(0, aMap.size - 1)]
+        val b = bMap[offset.coerceIn(0, bMap.size - 1)]
+        val c = cMap[offset.coerceIn(0, cMap.size - 1)]
+        val d = dMap[offset.coerceIn(0, dMap.size - 1)]
 
         return u8Mix(u8Mix(a, b, xi), u8Mix(c, d, xi), yi)
     }

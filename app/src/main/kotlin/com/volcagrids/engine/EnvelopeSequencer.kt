@@ -54,22 +54,23 @@ class EnvelopeSequencer {
      * Read raw value from topographic map at current step
      */
     private fun readTopographicValue(step: Int): Int {
-        val i = (x shr 6).coerceAtMost(3)
-        val j = (y shr 6).coerceAtMost(3)
+        // CRITICAL FIX: Clamp indices to prevent ArrayIndexOutOfBoundsException
+        val i = (x shr 6).coerceIn(0, 3)
+        val j = (y shr 6).coerceIn(0, 3)
         val xi = (x shl 2) and 0xff
         val yi = (y shl 2) and 0xff
-        
+
         val aMap = Resources.nodeTable[drumMap[i][j]]
         val bMap = Resources.nodeTable[drumMap[i + 1][j]]
         val cMap = Resources.nodeTable[drumMap[i][j + 1]]
         val dMap = Resources.nodeTable[drumMap[i + 1][j + 1]]
-        
+
         val offset = step.coerceIn(0, 95)  // Node data is 96 bytes
-        val a = aMap[offset].toInt()
-        val b = bMap[offset].toInt()
-        val c = cMap[offset].toInt()
-        val d = dMap[offset].toInt()
-        
+        val a = aMap[offset]
+        val b = bMap[offset]
+        val c = cMap[offset]
+        val d = dMap[offset]
+
         return u8Mix(u8Mix(a, b, xi), u8Mix(c, d, xi), yi)
     }
     
@@ -147,6 +148,21 @@ class EnvelopeSequencer {
         return applyRangeAndOffset(currentValue shr 1)  // Scale 0-255 to 0-127
     }
     
+    /**
+     * Get raw topographic value at step (for visualization)
+     */
+    fun getRawValueAtStep(step: Int): Int {
+        return readTopographicValue(step)
+    }
+    
+    /**
+     * Get shaped value at step (for visualization)
+     */
+    fun getShapedValueAtStep(step: Int): Int {
+        val rawValue = readTopographicValue(step)
+        return applyShape(rawValue, step)
+    }
+
     /**
      * Get current step (0-31)
      */

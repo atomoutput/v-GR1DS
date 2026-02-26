@@ -16,6 +16,7 @@ import com.volcagrids.midi.VolcaParameter
 import com.volcagrids.ui.components.*
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import androidx.lifecycle.viewModelScope
 
 /**
  * Sequencer Mode - DRUMS (Grids), EUCLIDEAN, or POLYRHYTHM
@@ -40,7 +41,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     var engineBY by mutableStateOf(prefs.engineBY)
     
     // Flag to prevent infinite recursion in link mode
-    private var isUpdatingLinkedEngine = false
+    @Volatile private var isUpdatingLinkedEngine = false
 
     val densitiesA = mutableStateListOf(
         prefs.getEngineADensity(0),
@@ -129,14 +130,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         get() = _sequencerMode.value
         set(value) {
             _sequencerMode.value = value
-            if (value == SequencerMode.POLYRHYTHM) {
-                polyrhythmPlaying = isPlaying
-                service?.polyrhythmPlaying = isPlaying
-            } else {
-                polyrhythmPlaying = false
-                service?.polyrhythmPlaying = false
-                service?.polyrhythmEngine?.reset()
-            }
+            // CRITICAL FIX: Use let to ensure service is not null before accessing
+            service?.let { srv ->
+                if (value == SequencerMode.POLYRHYTHM) {
+                    // Entering POLY mode: enable polyrhythm, disable Grids
+                    polyrhythmPlaying = isPlaying
+                    srv.polyrhythmPlaying = isPlaying
+                    srv.polyrhythmEngine.reset()
+                } else {
+                    // Leaving POLY mode: disable polyrhythm, enable Grids
+                    polyrhythmPlaying = false
+                    srv.polyrhythmPlaying = false
+                    srv.polyrhythmEngine.reset()
+                }
+            } ?: android.util.Log.w(TAG, "Service not bound when changing sequencer mode to $value")
         }
     
     
@@ -238,6 +245,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     var paramEnvelopeShape by mutableStateOf(EnvelopeShape.SMOOTH)
     var paramEnvelopeCC by mutableStateOf(51)  // Default to DRIVE
     
+    // Real-time modulation visualization state
+    var modulationPreviewValues = mutableStateListOf<Float>(0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f)
+    var modulationTargetValues = mutableStateListOf<Float>(0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f)
+    var modulationStepPositions = mutableStateListOf<Float>(0f, 0f, 0f, 0f, 0f, 0f)
+    var showModulationPreview by mutableStateOf(-1)  // Index of part showing preview, -1 = hidden
+
     val paramAssignments = mutableStateListOf(
         ParameterAssignment(0, 51, 127, 0, EnvelopeShape.SMOOTH, false),  // DRIVE
         ParameterAssignment(1, 49, 100, 20, EnvelopeShape.SMOOTH, false),  // BIT_REDUCTION
@@ -259,6 +272,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         paramEnvelopeCC = paramAssignments[part].ccNumber
     }
     
+    // Update real-time modulation visualization (called from sequencer thread via service)
+    fun updateModulationVisualization(part: Int, currentValue: Int, targetValue: Int, step: Int) {
+        if (part in 0..5) {
+            modulationPreviewValues[part] = currentValue / 127f
+            modulationTargetValues[part] = targetValue / 127f
+            modulationStepPositions[part] = step / 32f
+        }
+    }
+
     // Sync envelope sequencer positions with engine positions (only if linked)
     fun syncParamSequencerPositions() {
         if (paramLinkedToMain) {
@@ -315,7 +337,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         service = srv
         srv.setBPM(bpm)
         srv.setExternalSync(isExtSync)
-        srv.polyrhythmPlaying = (sequencerMode == SequencerMode.POLYRHYTHM && isPlaying)
+        
+        // CRITICAL: Ensure polyrhythm is DISABLED on startup (default mode is DRUMS)
+        srv.polyrhythmPlaying = false
+        srv.polyrhythmEngine.reset()
 
         // Sync current state to service
         srv.morphFactor = morphFactor
@@ -342,49 +367,55 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updateEngineA(x: Int, y: Int) {
-        // Prevent infinite recursion
+        // Prevent infinite recursion in link mode
         if (isUpdatingLinkedEngine) return
         
-        engineAX = x
-        engineAY = y
-        prefs.engineAX = x
-        prefs.engineAY = y
-        service?.engineA?.x = x
-        service?.engineA?.y = y
-        
-        // Link mode - update engine B proportionally
-        if (linkMode) {
-            isUpdatingLinkedEngine = true
-            engineBX = x
-            engineBY = y
-            prefs.engineBX = x
-            prefs.engineBY = y
-            service?.engineB?.x = x
-            service?.engineB?.y = y
-            isUpdatingLinkedEngine = false
-        }
-    }
-
-    fun updateEngineB(x: Int, y: Int) {
-        // Prevent infinite recursion
-        if (isUpdatingLinkedEngine) return
-        
-        engineBX = x
-        engineBY = y
-        prefs.engineBX = x
-        prefs.engineBY = y
-        service?.engineB?.x = x
-        service?.engineB?.y = y
-        
-        // Link mode - update engine A proportionally
-        if (linkMode) {
-            isUpdatingLinkedEngine = true
+        isUpdatingLinkedEngine = true
+        try {
             engineAX = x
             engineAY = y
             prefs.engineAX = x
             prefs.engineAY = y
             service?.engineA?.x = x
             service?.engineA?.y = y
+
+            // Link mode - update engine B proportionally
+            if (linkMode) {
+                engineBX = x
+                engineBY = y
+                prefs.engineBX = x
+                prefs.engineBY = y
+                service?.engineB?.x = x
+                service?.engineB?.y = y
+            }
+        } finally {
+            isUpdatingLinkedEngine = false
+        }
+    }
+
+    fun updateEngineB(x: Int, y: Int) {
+        // Prevent infinite recursion in link mode
+        if (isUpdatingLinkedEngine) return
+        
+        isUpdatingLinkedEngine = true
+        try {
+            engineBX = x
+            engineBY = y
+            prefs.engineBX = x
+            prefs.engineBY = y
+            service?.engineB?.x = x
+            service?.engineB?.y = y
+
+            // Link mode - update engine A proportionally
+            if (linkMode) {
+                engineAX = x
+                engineAY = y
+                prefs.engineAX = x
+                prefs.engineAY = y
+                service?.engineA?.x = x
+                service?.engineA?.y = y
+            }
+        } finally {
             isUpdatingLinkedEngine = false
         }
     }
@@ -539,31 +570,36 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (gesture.points.isEmpty()) return
             isPlayingGesture = true
             gesturePlaybackJob?.cancel()  // Cancel any existing playback
-            
-            // Start playback coroutine
-            gesturePlaybackJob = kotlinx.coroutines.CoroutineScope(
-                kotlinx.coroutines.Dispatchers.Main + kotlinx.coroutines.SupervisorJob()
-            ).launch {
+
+            // CRITICAL FIX: Use viewModelScope to prevent memory leaks
+            // When ViewModel is cleared, all coroutines are automatically cancelled
+            gesturePlaybackJob = viewModelScope.launch {
                 val startTime = System.currentTimeMillis()
-                while (isPlayingGesture) {
-                    val elapsed = System.currentTimeMillis() - startTime
-                    val progress = (elapsed.toFloat() / gesture.duration).coerceIn(0f, 1f)
-                    gesturePlaybackProgress = progress
-                    
-                    // Find current point in gesture
-                    val currentIndex = (progress * (gesture.points.size - 1)).toInt()
-                        .coerceIn(0, gesture.points.size - 1)
-                    val point = gesture.points[currentIndex]
-                    
-                    // Apply gesture position to engine A
-                    updateEngineA(point.x.toInt(), point.y.toInt())
-                    
-                    if (progress >= 1f) {
-                        // Loop: restart
-                        gesturePlaybackProgress = 0f
+                try {
+                    while (isPlayingGesture) {
+                        val elapsed = System.currentTimeMillis() - startTime
+                        val progress = (elapsed.toFloat() / gesture.duration).coerceIn(0f, 1f)
+                        gesturePlaybackProgress = progress
+
+                        // Find current point in gesture
+                        val currentIndex = (progress * (gesture.points.size - 1)).toInt()
+                            .coerceIn(0, gesture.points.size - 1)
+                        val point = gesture.points[currentIndex]
+
+                        // Apply gesture position to engine A
+                        updateEngineA(point.x.toInt(), point.y.toInt())
+
+                        if (progress >= 1f) {
+                            // Loop: restart
+                            gesturePlaybackProgress = 0f
+                        }
+
+                        kotlinx.coroutines.delay(16)  // ~60fps
                     }
-                    
-                    kotlinx.coroutines.delay(16)  // ~60fps
+                } finally {
+                    // Cleanup when coroutine completes or is cancelled
+                    isPlayingGesture = false
+                    gesturePlaybackProgress = 0f
                 }
             }
         }
@@ -815,5 +851,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun togglePolyrhythmSolo(channel: Int) {
         val current = service?.polyrhythmEngine?.isSoloed?.getOrNull(channel) ?: false
         service?.polyrhythmEngine?.setSolo(channel, !current)
+    }
+
+    // CRITICAL: Clean up resources when ViewModel is destroyed
+    override fun onCleared() {
+        super.onCleared()
+        // Cancel gesture playback to prevent memory leaks
+        gesturePlaybackJob?.cancel()
+        gesturePlaybackJob = null
+        // Clear any pending callbacks
+        com.volcagrids.ui.FeedbackManager.clear()
     }
 }

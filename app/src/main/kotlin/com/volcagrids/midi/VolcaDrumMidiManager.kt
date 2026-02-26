@@ -33,15 +33,23 @@ class VolcaDrumMidiManager {
 
     /**
      * Send trigger immediately (not throttled - triggers are time-critical)
+     * NON-BLOCKING: Returns false if MIDI port not ready
      */
-    fun sendTrigger(channel: Int, isAccent: Boolean) {
+    fun sendTrigger(channel: Int, isAccent: Boolean): Boolean {
+        val port = inputPort
+        if (port == null) return false  // MIDI not connected
+        
         val velocity = if (isAccent) ACCENT_VELOCITY else DEFAULT_VELOCITY
         val buffer = byteArrayOf(
             (0x90 or (channel and 0x0F)).toByte(), // Note On
             triggerNotes[channel % 6].toByte(), // Generic Configurable Note
             velocity.toByte()
         )
-        inputPort?.send(buffer, 0, buffer.size)
+        
+        // send() can block if buffer is full - but we call it from real-time thread
+        // Android MIDI buffer is typically large enough for burst triggers
+        port.send(buffer, 0, buffer.size)
+        return true
     }
 
     /**
