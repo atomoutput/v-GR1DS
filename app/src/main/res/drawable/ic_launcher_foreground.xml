@@ -1,0 +1,40 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="512"
+    android:viewportHeight="512">
+    <!-- Simplified v_GR1D Icon Foreground -->
+    <group android:translateX="256" android:translateY="186">
+        <!-- Cube Left Face -->
+        <path
+            android:fillColor="#A33000"
+            android:pathData="M 0,20 L 0,70 L -60,40 L -60,-10 Z" />
+        <!-- Cube Right Face -->
+        <path
+            android:fillColor="#CC3D00"
+            android:pathData="M 0,20 L 0,70 L 60,40 L 60,-10 Z" />
+        <!-- Cube Top Face -->
+        <path
+            android:fillColor="#FF4D00"
+            android:pathData="M 0,20 L -60,-10 L 0,-40 L 60,-10 Z" />
+        <!-- Cube Outline -->
+        <path
+            android:strokeColor="#F0F0F0"
+            android:strokeWidth="6"
+            android:strokeLineJoin="round"
+            android:pathData="M 0,70 L 0,20 M -60,40 L -60,-10 L 0,-40 L 60,-10 L 60,40 L 0,70" />
+    </group>
+    <!-- Floating Data Squares -->
+    <group android:translateX="166" android:translateY="146">
+        <path
+            android:fillColor="#FF4D00"
+            android:strokeColor="#F0F0F0"
+            android:strokeWidth="3"
+            android:pathData="M 0,17.68 L 17.68,35.36 L 35.36,17.68 L 17.68,0 Z" />
+    </group>
+    <group android:translateX="356" android:translateY="226">
+        <path
+            android:fillColor="#F0F0F0"
+            android:pathData="M 0,10.6 L 10.6,21.2 L 21.2,10.6 L 10.6,0 Z" />
+    </group>
+</vector>

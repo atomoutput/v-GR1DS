@@ -1,0 +1,30 @@
+# Build outputs
+build/
+.gradle/
+reports/
+*.o
+*.hex
+*.bin
+*.elf
+*.map
+*.lst
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+
+# User-specific
+local.properties
+
+# Documentation (not needed for build)
+*.pdf
+*.jpg
+*.png
+*.svg
+
+# Python cache
+__pycache__/
+*.pyc
