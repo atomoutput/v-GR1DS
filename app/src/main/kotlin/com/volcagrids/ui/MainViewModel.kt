@@ -14,6 +14,8 @@ import com.volcagrids.engine.PolyrhythmEngine
 import com.volcagrids.midi.MidiSequencerService
 import com.volcagrids.midi.VolcaParameter
 import com.volcagrids.ui.components.*
+import com.volcagrids.plaits.PlaitsTrack
+import com.volcagrids.audio.PlaitsAudioEngine
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import androidx.lifecycle.viewModelScope
@@ -260,6 +262,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         ParameterAssignment(5, 29, 40, 64, EnvelopeShape.RANDOM, false)  // MOD_AMOUNT
     )
     val paramEnvelopeSequencers = List(6) { EnvelopeSequencer() }
+
+    // Plaits Synthesizer Integration
+    val plaitsAudioEngine by lazy { PlaitsAudioEngine() }
+    val plaitsTracks = mutableStateListOf(
+        PlaitsTrack(0, "Part 1"),
+        PlaitsTrack(1, "Part 2"),
+        PlaitsTrack(2, "Part 3"),
+        PlaitsTrack(3, "Part 4"),
+        PlaitsTrack(4, "Part 5"),
+        PlaitsTrack(5, "Part 6"),
+        PlaitsTrack(6, "Poly")  // For polyrhythm mode
+    )
+    var plaitsEnabled by mutableStateOf(false)
+    var currentPlaitsTrackIndex by mutableStateOf(0)
+    var showPlaitsOverlay by mutableStateOf(false)
     
     // Update UI state from sequencer
     fun updateParamUIState(part: Int) {
@@ -337,7 +354,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         service = srv
         srv.setBPM(bpm)
         srv.setExternalSync(isExtSync)
-        
+
         // CRITICAL: Ensure polyrhythm is DISABLED on startup (default mode is DRUMS)
         srv.polyrhythmPlaying = false
         srv.polyrhythmEngine.reset()
@@ -358,6 +375,63 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         logicModesB.forEachIndexed { i, m -> srv.logicModesB[i] = m }
         partModesA.forEachIndexed { i, m -> srv.engineA.partModes[i] = m }
         partModesB.forEachIndexed { i, m -> srv.engineB.partModes[i] = m }
+
+        // Initialize Plaits audio engine
+        if (plaitsEnabled) {
+            initPlaits()
+        }
+    }
+
+    // Plaits Methods
+    fun initPlaits() {
+        plaitsAudioEngine.init()
+        plaitsTracks.forEach { track ->
+            plaitsAudioEngine.addTrack(track)
+        }
+        plaitsAudioEngine.start()
+    }
+
+    fun togglePlaits(enabled: Boolean) {
+        plaitsEnabled = enabled
+        if (enabled && service != null) {
+            initPlaits()
+        } else {
+            plaitsAudioEngine.stop()
+        }
+    }
+
+    fun setCurrentPlaitsTrack(index: Int) {
+        currentPlaitsTrackIndex = index.coerceIn(0, 6)
+    }
+
+    fun getCurrentPlaitsTrack(): PlaitsTrack? {
+        return plaitsTracks.getOrNull(currentPlaitsTrackIndex)
+    }
+
+    fun setPlaitsEngine(trackIndex: Int, engineIndex: Int) {
+        plaitsTracks.getOrNull(trackIndex)?.setEngine(engineIndex)
+    }
+
+    fun setPlaitsParameters(
+        trackIndex: Int,
+        harmonics: Float? = null,
+        timbre: Float? = null,
+        morph: Float? = null,
+        decay: Float? = null
+    ) {
+        plaitsTracks.getOrNull(trackIndex)?.setParameters(harmonics, timbre, morph, decay)
+    }
+
+    fun triggerPlaitsTrack(trackIndex: Int, note: Float = 0.0f, velocity: Float = 0.8f) {
+        if (plaitsEnabled) {
+            plaitsTracks.getOrNull(trackIndex)?.triggerOn(note, velocity)
+        }
+    }
+
+    fun releasePlaitsTrack(trackIndex: Int) {
+        if (plaitsEnabled) {
+            plaitsTracks.getOrNull(trackIndex)?.triggerOff()
+        }
     }
 
     fun toggleExtSync(enabled: Boolean) {
@@ -861,5 +935,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         gesturePlaybackJob = null
         // Clear any pending callbacks
         com.volcagrids.ui.FeedbackManager.clear()
+        // Stop and release Plaits audio engine
+        plaitsAudioEngine.release()
     }
 }
