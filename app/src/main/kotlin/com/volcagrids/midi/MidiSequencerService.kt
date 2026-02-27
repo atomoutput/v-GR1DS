@@ -27,6 +27,8 @@ import com.volcagrids.engine.EnvelopeSequencer
 import com.volcagrids.engine.ParameterAssignment
 import com.volcagrids.engine.EnvelopeShape
 import com.volcagrids.engine.PolyrhythmEngine
+import com.volcagrids.plaits.PlaitsTrack
+import com.volcagrids.plaits.TriggerSource
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
@@ -78,6 +80,9 @@ class MidiSequencerService : Service() {
     val polyrhythmEngine by lazy { PolyrhythmEngine() }
     var polyrhythmEnabled = false
     var polyrhythmPlaying = false  // Set by ViewModel when in POLYRHYTHM mode
+
+    // Plaits Synthesizer Integration
+    var plaitsTracks: List<PlaitsTrack>? = null
 
     // Android Lifecycle & CPU WakeLock
     private var wakeLock: PowerManager.WakeLock? = null
@@ -475,6 +480,9 @@ class MidiSequencerService : Service() {
             }
             android.util.Log.d("SequencerDebug", "All triggers sent")
 
+            // 5a. Trigger Plaits tracks based on Grids output
+            dispatchPlaitsTriggers(outA, outB)
+
             // 5. Euclidean S&H - Optimized (only when enabled, only in Grids mode)
             val currentStep = engineA.getStep()
             if (currentStep != lastEuclideanStep) {
@@ -522,6 +530,62 @@ class MidiSequencerService : Service() {
 
         // 9. Process throttled CC queue
         midiManager.processCCQueue()
+    }
+
+    /**
+     * Dispatch triggers to Plaits tracks based on Grids engine output
+     */
+    private fun dispatchPlaitsTriggers(outA: Int, outB: Int) {
+        val tracks = plaitsTracks ?: return
+
+        // Check each Grids part and trigger corresponding Plaits tracks
+        for (i in 0..2) {
+            // Engine A parts
+            if ((outA and (1 shl i)) != 0) {
+                val isAccent = (outA and (1 shl (i + 3))) != 0
+                val velocity = if (isAccent) 1.0f else 0.6f
+                val triggerSource = when (i) {
+                    0 -> TriggerSource.ENGINE_A_PART1
+                    1 -> TriggerSource.ENGINE_A_PART2
+                    2 -> TriggerSource.ENGINE_A_PART3
+                    else -> null
+                }
+                triggerSource?.let { source ->
+                    tracks.forEach { track ->
+                        if (track.enabled && !track.muted && track.isTriggeredBy(source)) {
+                            track.triggerOn(0.0f, velocity)
+                            // Release trigger after short gate time
+                            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                                track.triggerOff()
+                            }, 10)
+                        }
+                    }
+                }
+            }
+
+            // Engine B parts
+            if ((outB and (1 shl i)) != 0) {
+                val isAccent = (outB and (1 shl (i + 3))) != 0
+                val velocity = if (isAccent) 1.0f else 0.6f
+                val triggerSource = when (i) {
+                    0 -> TriggerSource.ENGINE_B_PART1
+                    1 -> TriggerSource.ENGINE_B_PART2
+                    2 -> TriggerSource.ENGINE_B_PART3
+                    else -> null
+                }
+                triggerSource?.let { source ->
+                    tracks.forEach { track ->
+                        if (track.enabled && !track.muted && track.isTriggeredBy(source)) {
+                            track.triggerOn(0.0f, velocity)
+                            // Release trigger after short gate time
+                            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                                track.triggerOff()
+                            }, 10)
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private fun processModMatrix(currentStep: Int) {

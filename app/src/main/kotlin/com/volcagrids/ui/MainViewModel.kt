@@ -389,6 +389,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             plaitsAudioEngine.addTrack(track)
         }
         plaitsAudioEngine.start()
+
+        // Connect Plaits tracks to service for trigger dispatch
+        service?.plaitsTracks = plaitsTracks
     }
 
     fun togglePlaits(enabled: Boolean) {

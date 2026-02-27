@@ -1,5 +1,6 @@
 package com.volcagrids.plaits
 
+import androidx.compose.runtime.mutableStateListOf
 import com.volcagrids.plaits.dsp.PlaitsPatch
 import com.volcagrids.plaits.dsp.PlaitsModulations
 import com.volcagrids.plaits.dsp.PlaitsVoice
@@ -27,9 +28,16 @@ class PlaitsTrack(
     var muted = false
     var solo = false
 
+    // Trigger routing - which Grids parts trigger this Plaits track
+    val triggerSources = mutableStateListOf<TriggerSource>()
+
     // Volume and pan
     var volume = 1.0f
     var pan = 0.0f  // -1.0 (left) to 1.0 (right)
+
+    // Pitch/note settings
+    var baseNote = 0.0f  // MIDI note offset
+    var velocitySensitivity = 0.8f
 
     // Trigger state
     private var triggerGate = false
@@ -52,13 +60,13 @@ class PlaitsTrack(
     fun getEngine(): Int = voice.getActiveEngine()
 
     /**
-     * Trigger note on
+     * Trigger note on with velocity
      */
     fun triggerOn(note: Float = 0.0f, velocity: Float = 0.8f) {
         triggerGate = true
         modulations.trigger = 1.0f
-        modulations.level = velocity
-        modulations.note = note
+        modulations.level = velocity * velocitySensitivity
+        modulations.note = note + baseNote
     }
 
     /**
@@ -67,6 +75,36 @@ class PlaitsTrack(
     fun triggerOff() {
         triggerGate = false
         modulations.trigger = 0.0f
+    }
+
+    /**
+     * Check if this track should be triggered by a source
+     */
+    fun isTriggeredBy(source: TriggerSource): Boolean {
+        return triggerSources.contains(source)
+    }
+
+    /**
+     * Add a trigger source
+     */
+    fun addTriggerSource(source: TriggerSource) {
+        if (!triggerSources.contains(source)) {
+            triggerSources.add(source)
+        }
+    }
+
+    /**
+     * Remove a trigger source
+     */
+    fun removeTriggerSource(source: TriggerSource) {
+        triggerSources.remove(source)
+    }
+
+    /**
+     * Clear all trigger sources
+     */
+    fun clearTriggerSources() {
+        triggerSources.clear()
     }
 
     /**
@@ -218,4 +256,25 @@ enum class PlaitsEngineType(val index: Int, val displayName: String) {
             return values().find { it.index == index } ?: VIRTUAL_ANALOG
         }
     }
+}
+
+/**
+ * Trigger source for Plaits tracks
+ * Maps Grids engine parts to Plaits triggers
+ */
+enum class TriggerSource(val displayName: String) {
+    ENGINE_A_PART1("Engine A - Part 1"),
+    ENGINE_A_PART2("Engine A - Part 2"),
+    ENGINE_A_PART3("Engine A - Part 3"),
+    ENGINE_B_PART1("Engine B - Part 1"),
+    ENGINE_B_PART2("Engine B - Part 2"),
+    ENGINE_B_PART3("Engine B - Part 3"),
+    POLYRHYTHM_1("Polyrhythm 1"),
+    POLYRHYTHM_2("Polyrhythm 2"),
+    POLYRHYTHM_3("Polyrhythm 3"),
+    POLYRHYTHM_4("Polyrhythm 4"),
+    POLYRHYTHM_5("Polyrhythm 5"),
+    POLYRHYTHM_6("Polyrhythm 6"),
+    MIDI_IN("MIDI Input"),
+    INTERNAL("Internal Clock")
 }

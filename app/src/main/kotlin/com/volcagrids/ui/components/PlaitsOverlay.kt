@@ -393,6 +393,20 @@ private fun PlaitsTrackPage(viewModel: MainViewModel) {
             }
         }
 
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Trigger Routing
+        currentTrack?.let { track ->
+            PlaitsTriggerRouter(
+                track = track,
+                onTriggerSourcesChange = { sources ->
+                    // Trigger sources updated in track directly
+                }
+            )
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
         // Enable/Disable toggle
         Spacer(modifier = Modifier.height(24.dp))
         Box(

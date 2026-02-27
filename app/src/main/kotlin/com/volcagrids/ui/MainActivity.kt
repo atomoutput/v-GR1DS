@@ -114,6 +114,14 @@ class MainActivity : ComponentActivity() {
                         )
                     }
 
+                    // Plaits Overlay
+                    if (viewModel.showPlaitsOverlay) {
+                        PlaitsOverlay(
+                            viewModel = viewModel,
+                            onClose = { viewModel.showPlaitsOverlay = false }
+                        )
+                    }
+
                     // Volca Sound Design Drawer
                     if (viewModel.showVolcaDrawer) {
                         VolcaDrawer(
@@ -579,12 +587,12 @@ fun MasterCore(viewModel: MainViewModel, modifier: Modifier) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 SystemButton("SETT", false, { viewModel.showSettings = true }, Modifier.weight(1f))
                 SystemButton("MIDI", false, { viewModel.showMidiConfig = true }, Modifier.weight(1f))
-                SystemButton("VLC", false, { viewModel.toggleVolcaDrawer() }, Modifier.weight(1f))
+                SystemButton("PLAITS", false, { viewModel.showPlaitsOverlay = true }, Modifier.weight(1f))
             }
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                SystemButton("VLC", false, { viewModel.toggleVolcaDrawer() }, Modifier.weight(1f))
                 SystemButton("MOD", false, { viewModel.toggleModMatrix() }, Modifier.weight(1f))
                 SystemButton("PERF", false, { viewModel.togglePerformanceLayer() }, Modifier.weight(1f))
-                SystemButton("SYS", false, { viewModel.toggleSystemTools() }, Modifier.weight(1f))
             }
         }
 
